@@ -29,7 +29,7 @@
 
 -export([cache/3, setup/2, stats/1]).
 
--define(DEFAULT_MAX_SIZE, 8*1024*1024).
+-define(DEFAULT_MAX_SIZE, 4*1024*1024).
 -define(DEFAULT_Q1_MIN_SIZE, round(0.3 * ?DEFAULT_MAX_SIZE)).
 
 -spec cache(Cache :: atom(), Key :: term(), ValFun :: function()) -> term().
