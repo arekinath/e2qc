@@ -10,12 +10,15 @@ Its primary goals are:
 
 1. Add e2qc as a `rebar.config` dependency in your project:
 
+    ```
     {deps, [
         {e2qc, ".*", {git, "git://github.com/arekinath/e2qc.git", "HEAD"}}
     ]}
+    ```
 
 2. Use it! Wrap your slow processing that you want to cache in a call to `e2qc:cache`:
 
+    ```
     some_function(Input) ->
         do_slow_thing(Input).
 
@@ -23,6 +26,7 @@ Its primary goals are:
 
     some_function(Input) ->
         e2qc:cache(slow_thing, Input, fun do_slow_thing/1).
+    ```
 
 It's really that simple. Each "cache" is named by a unique atom (in this case we've used a cache called `slow_thing`). You don't need to explicitly create or configure the cache before using it -- it will be created on the first use. The default configuration will cache up to 4MB of data.
 
