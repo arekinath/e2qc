@@ -200,6 +200,7 @@ cache_bg_thread(void *arg)
 
 			enif_rwlock_rwunlock(c->cache_lock);
 			enif_mutex_lock(c->ctrl_lock);
+			enif_free(n);
 			lastloop = 1;
 		}
 
