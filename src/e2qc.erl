@@ -29,8 +29,8 @@
 
 -export([cache/3, setup/2, stats/1]).
 
--define(DEFAULT_MAX_SIZE, 1*1024*1024).
--define(DEFAULT_Q1_MIN_SIZE, round(?DEFAULT_MAX_SIZE / 2)).
+-define(DEFAULT_MAX_SIZE, 8*1024*1024).
+-define(DEFAULT_Q1_MIN_SIZE, round(0.3 * ?DEFAULT_MAX_SIZE)).
 
 -spec cache(Cache :: atom(), Key :: term(), ValFun :: function()) -> term().
 cache(Cache, Key, ValFun) ->
@@ -51,10 +51,10 @@ cache(Cache, Key, ValFun) ->
 
 -spec setup(Cache :: atom(), Config :: [{K :: atom(), V :: term()}]) -> ok.
 setup(Cache, Config) ->
-	MaxSize = proplists:get_value(max_size, Config, ?DEFAULT_MAX_SIZE),
+	MaxSize = proplists:get_value(max_size, Config, proplists:get_value(size, Config, ?DEFAULT_MAX_SIZE)),
 	MinQ1Size = case proplists:get_value(min_q1_size, Config) of
 		undefined ->
-			R = proplists:get_value(ratio, Config, 0.5),
+			R = proplists:get_value(ratio, Config, 0.3),
 			round(R * MaxSize);
 		V when is_integer(V) -> V;
 		V when is_float(V) -> round(V)

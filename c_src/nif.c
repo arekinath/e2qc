@@ -90,7 +90,6 @@ struct cache_queue {
 #define FL_DYING	1
 
 /* can take:
-	* ctrl_lock then cache_lock (ONLY for bg_thread)
 	* cache_lock then lookup_lock
 	* lookup_lock then ctrl_lock
 */
@@ -140,10 +139,23 @@ RB_GENERATE(atom_tree, atom_node, entry, atom_tree_cmp);
 static void
 destroy_cache_node(struct cache_node *n)
 {
+	struct cache_incr_node *in, *nextin;
+
 	TAILQ_REMOVE(&(n->q->head), n, entry);
 	n->q->size -= n->size;
 	n->q = NULL;
 	HASH_DEL(n->c->lookup, n);
+
+	nextin = TAILQ_FIRST(&(n->c->incr_head));
+	while ((in = nextin)) {
+		nextin = TAILQ_NEXT(in, entry);
+		if (in->node == n) {
+			TAILQ_REMOVE(&(n->c->incr_head), in, entry);
+			in->node = 0;
+			enif_free(in);
+		}
+	}
+
 	n->c = NULL;
 	enif_free(n->key);
 	n->key = NULL;
@@ -156,9 +168,11 @@ static void *
 cache_bg_thread(void *arg)
 {
 	struct cache *c = (struct cache *)arg;
+	int lastloop = 0;
 	enif_mutex_lock(c->ctrl_lock);
 	while (1) {
-		enif_cond_wait(c->check_cond, c->ctrl_lock);
+		if (!lastloop)
+			enif_cond_wait(c->check_cond, c->ctrl_lock);
 
 		if (c->flags & FL_DYING) {
 			break;
@@ -169,6 +183,7 @@ cache_bg_thread(void *arg)
 			n = TAILQ_FIRST(&(c->incr_head));
 			TAILQ_REMOVE(&(c->incr_head), n, entry);
 
+			enif_mutex_unlock(c->ctrl_lock);
 			enif_rwlock_rwlock(c->cache_lock);
 
 			if (n->node->q == &(c->q1)) {
@@ -184,6 +199,8 @@ cache_bg_thread(void *arg)
 			}
 
 			enif_rwlock_rwunlock(c->cache_lock);
+			enif_mutex_lock(c->ctrl_lock);
+			lastloop = 1;
 		}
 
 		enif_mutex_unlock(c->ctrl_lock);
@@ -191,6 +208,7 @@ cache_bg_thread(void *arg)
 		enif_rwlock_rwlock(c->cache_lock);
 		if (c->q1.size + c->q2.size > c->max_size) {
 			enif_rwlock_rwlock(c->lookup_lock);
+			enif_mutex_lock(c->ctrl_lock);
 
 			while ((c->q1.size + c->q2.size > c->max_size) &&
 					(c->q1.size > c->min_q1_size)) {
@@ -205,7 +223,9 @@ cache_bg_thread(void *arg)
 				destroy_cache_node(n);
 			}
 
+			enif_mutex_unlock(c->ctrl_lock);
 			enif_rwlock_rwunlock(c->lookup_lock);
+			lastloop = 1;
 		}
 		enif_rwlock_rwunlock(c->cache_lock);
 
@@ -424,7 +444,7 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	enif_rwlock_rwunlock(c->lookup_lock);
 	enif_rwlock_rwunlock(c->cache_lock);
 
-	enif_cond_signal(c->check_cond);
+	enif_cond_broadcast(c->check_cond);
 
 	return enif_make_atom(env, "ok");
 badarg:
@@ -473,7 +493,7 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		TAILQ_INSERT_TAIL(&(c->incr_head), in, entry);
 		c->hit++;
 		enif_mutex_unlock(c->ctrl_lock);
-		enif_cond_signal(c->check_cond);
+		enif_cond_broadcast(c->check_cond);
 
 		ret = enif_make_resource_binary(env, n->val, n->val, n->vsize);
 		enif_rwlock_runlock(c->lookup_lock);
