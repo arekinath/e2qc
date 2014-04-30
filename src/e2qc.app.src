@@ -1,0 +1,14 @@
+{application, e2qc,
+ [
+  {description, "2q cache"},
+  {vsn, "1.0"},
+  {registered, []},
+  {included_applications, [
+  ]},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {start_phases, []},
+  {env, []}
+ ]}.
