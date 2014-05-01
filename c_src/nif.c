@@ -614,9 +614,7 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		HASH_FIND(hh, c->lookup, kbin.data, kbin.size, n);
 		if (!n) {
 			enif_rwlock_runlock(c->lookup_lock);
-			enif_mutex_lock(c->ctrl_lock);
-			c->miss++;
-			enif_mutex_unlock(c->ctrl_lock);
+			__sync_add_and_fetch(&c->miss, 1);
 			enif_consume_timeslice(env, 10);
 			return enif_make_atom(env, "notfound");
 		}
@@ -624,10 +622,10 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		in = enif_alloc(sizeof(*in));
 		memset(in, 0, sizeof(*in));
 		in->node = n;
+		__sync_add_and_fetch(&c->hit, 1);
 
 		enif_mutex_lock(c->ctrl_lock);
 		TAILQ_INSERT_TAIL(&(c->incr_head), in, entry);
-		c->hit++;
 		enif_mutex_unlock(c->ctrl_lock);
 		enif_cond_broadcast(c->check_cond);
 
