@@ -38,7 +38,11 @@
 
 #include "queue.h"
 #include "tree.h"
+
+/* use paul hsieh's hash function */
+#define HASH_FUNCTION	HASH_SFH
 #include "uthash.h"
+
 #include "erl_nif.h"
 
 /*
