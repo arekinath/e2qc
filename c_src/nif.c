@@ -196,6 +196,7 @@ cache_bg_thread(void *arg)
 			enif_rwlock_rwlock(c->cache_lock);
 			enif_mutex_lock(c->ctrl_lock);
 		}
+		lastloop = 0;
 
 		/* if we've been told to die, quit this loop and start cleaning up */
 		if (c->flags & FL_DYING) {
