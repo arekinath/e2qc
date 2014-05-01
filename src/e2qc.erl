@@ -27,7 +27,7 @@
 
 -module(e2qc).
 
--export([cache/3, setup/2, stats/1]).
+-export([cache/3, setup/2, stats/1, evict/2, teardown/1]).
 
 -define(DEFAULT_MAX_SIZE, 4*1024*1024).
 -define(DEFAULT_Q1_MIN_SIZE, round(0.3 * ?DEFAULT_MAX_SIZE)).
@@ -49,6 +49,15 @@ cache(Cache, Key, ValFun) ->
 		_ -> error(badcache)
 	end.
 
+-spec evict(Cache :: atom(), Key :: term()) -> ok | notfound.
+evict(Cache, Key) ->
+	KeyBin = if is_binary(Key) -> Key; is_integer(Key) -> binary:encode_unsigned(Key); true -> term_to_binary(Key) end,
+	e2qc_nif:destroy(Cache, KeyBin).
+
+-spec teardown(Cache :: atom()) -> ok | notfound.
+teardown(Cache) ->
+	e2qc_nif:destroy(Cache).
+
 -spec setup(Cache :: atom(), Config :: [{K :: atom(), V :: term()}]) -> ok.
 setup(Cache, Config) ->
 	MaxSize = proplists:get_value(max_size, Config, proplists:get_value(size, Config, ?DEFAULT_MAX_SIZE)),
@@ -67,7 +76,7 @@ setup(Cache, Config) ->
 -spec stats(Cache :: atom()) -> [{K :: atom(), V :: term()}].
 stats(Cache) ->
 	case e2qc_nif:stats(Cache) of
-		notfound -> [];
+		notfound -> [{hits, 0}, {misses, 0}, {q1size, 0}, {q2size, 0}];
 		{Hits, Misses, Q1Size, Q2Size} ->
 			[{hits, Hits}, {misses, Misses}, {q1size, Q1Size}, {q2size, Q2Size}]
 	end.

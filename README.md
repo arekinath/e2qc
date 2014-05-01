@@ -53,4 +53,10 @@ The `e2qc:stats/1` function is useful if you want to know how your cache is doin
 
 ## Deleting or deliberately expiring entries
 
-Yeah this isn't done yet. Will be there shortly.
+If you know that an entry in the cache is stale or needs to be evicted, you can use the `e2qc:evict/2` function to clear it out:
+
+    e2qc:evict(slow_thing, OldInput)
+
+Now the next attempt to look for `OldInput` will miss and be re-calculated.
+
+You can also destroy an entire cache if you wish, using `e2qc:teardown/1`. This will destroy the cache and all of its entries entirely (but note that if another call attempts to use it afterwards, it will simply be re-created implicitly with default settings).
