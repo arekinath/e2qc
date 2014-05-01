@@ -417,6 +417,8 @@ destroy(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 			enif_rwlock_rwunlock(c->lookup_lock);
 			enif_rwlock_rwunlock(c->cache_lock);
 
+			enif_consume_timeslice(env, 50);
+
 			return enif_make_atom(env, "ok");
 
 		} else {
@@ -426,6 +428,8 @@ destroy(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 			enif_cond_broadcast(c->check_cond);
 
 			enif_thread_join(c->bg_thread, NULL);
+
+			enif_consume_timeslice(env, 100);
 
 			return enif_make_atom(env, "ok");
 		}
@@ -463,9 +467,11 @@ create(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 	if ((c = get_cache(atom))) {
 		enif_free(atom);
+		enif_consume_timeslice(env, 5);
 		return enif_make_atom(env, "already_exists");
 	} else {
 		c = new_cache(atom, max_size, min_q1_size);
+		enif_consume_timeslice(env, 20);
 		return enif_make_atom(env, "ok");
 	}
 
@@ -500,6 +506,7 @@ stats(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 			enif_make_uint64(env, c->miss),
 			q1s, q2s);
 		enif_mutex_unlock(c->ctrl_lock);
+		enif_consume_timeslice(env, 10);
 		return ret;
 	} else {
 		enif_free(atom);
@@ -533,6 +540,7 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 	if ((c = get_cache(atom))) {
 		enif_free(atom);
+		enif_consume_timeslice(env, 1);
 
 	} else {
 		/* if we've been asked to put() in to a cache that doesn't exist yet
@@ -543,6 +551,7 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		if (!enif_get_uint64(env, argv[4], &min_q1_size))
 			return enif_make_badarg(env);
 		c = new_cache(atom, max_size, min_q1_size);
+		enif_consume_timeslice(env, 20);
 	}
 
 	n = enif_alloc(sizeof(*n));
@@ -566,6 +575,7 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	enif_rwlock_rwunlock(c->cache_lock);
 
 	enif_cond_broadcast(c->check_cond);
+	enif_consume_timeslice(env, 50);
 
 	return enif_make_atom(env, "ok");
 badarg:
@@ -603,6 +613,7 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 			enif_mutex_lock(c->ctrl_lock);
 			c->miss++;
 			enif_mutex_unlock(c->ctrl_lock);
+			enif_consume_timeslice(env, 10);
 			return enif_make_atom(env, "notfound");
 		}
 
@@ -618,6 +629,8 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 		ret = enif_make_resource_binary(env, n->val, n->val, n->vsize);
 		enif_rwlock_runlock(c->lookup_lock);
+
+		enif_consume_timeslice(env, 20);
 
 		return ret;
 
