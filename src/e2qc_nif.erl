@@ -98,14 +98,6 @@ put_then_get_test() ->
 	?assertMatch(ok, put(put_then_get, <<"foo">>, <<"bar">>, 1024, 512)),
 	?assertMatch(<<"bar">>, get(put_then_get, <<"foo">>)).
 
-sleep_until(CondFun, Timeout) when (Timeout < 50) ->
-	CondFun();
-sleep_until(CondFun, Timeout) ->
-	case CondFun() of
-		true -> true;
-		_ -> timer:sleep(50), sleep_until(CondFun, Timeout - 50)
-	end.
-
 put_evict_q1_test() ->
 	ok = create(put_evict_q1, 20, 10),
 	[ok = put(put_evict_q1, <<N>>, <<N>>) || N <- lists:seq(1,10)],
@@ -114,9 +106,10 @@ put_evict_q1_test() ->
 	?assertMatch(<<1>>, get(put_evict_q1, <<1>>)),
 	?assertMatch(<<10>>, get(put_evict_q1, <<10>>)),
 	ok = put(put_evict_q1, <<11>>, <<11>>),
-	% sleep until the bg_thread has woken up and done the eviction
-	true = sleep_until(
-		fun() -> get(put_evict_q1, <<2>>) =:= notfound end, 5000),
+	% 1s should always be enough for the bg_thread to wake up
+	% (usually happens within 1ms or so)
+	timer:sleep(1000),
+	?assertMatch(notfound, get(put_evict_q1, <<2>>)),
 	?assertMatch(<<1>>, get(put_evict_q1, <<1>>)),
 	?assertMatch(<<10>>, get(put_evict_q1, <<10>>)),
 	?assertMatch(<<11>>, get(put_evict_q1, <<11>>)).
@@ -128,11 +121,11 @@ put_evict_q2_test() ->
 	[<<N>> = get(put_evict_q2, <<N>>) || N <- lists:seq(1,10)],
 	% now add an extra to q1 (q1 will be < min_q1_size)
 	ok = put(put_evict_q2, <<11>>, <<11>>),
+	% sleep till bg_thread wakes up
+	timer:sleep(1000),
 	% we should have evicted the least recently used thing on q2,
 	% which will be <<1>>
-	% sleep till bg_thread wakes up
-	true = sleep_until(
-		fun() -> get(put_evict_q2, <<1>>) =:= notfound end, 5000),
+	?assertMatch(notfound, get(put_evict_q2, <<1>>)),
 	?assertMatch(<<2>>, get(put_evict_q2, <<2>>)),
 	?assertMatch(<<11>>, get(put_evict_q2, <<11>>)).
 
