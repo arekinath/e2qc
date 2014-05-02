@@ -182,8 +182,8 @@ bench_t_tester() ->
 		[N, S1, S2, U1, U2, T, DF]),
 
 	?assertMatch(Df when (Df >= 40), DF),
-	?assertMatch(Tt when (Tt > 3.307), abs(T)).
-			% t-value threshold for 99.9% confidence at given DF
+	?assertMatch(Tt when (Tt > 3.307), abs(T)), % t-value threshold for 99.9% confidence
+	?assert(U1 < U2).
 
 is_fast_test_() ->
 	{timeout, 60,
