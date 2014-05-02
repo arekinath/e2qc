@@ -143,7 +143,7 @@ factorial(1) -> 1;
 factorial(N) when is_integer(N) and (N > 1) -> N * factorial(N-1).
 
 slow_func(K) ->
-	math:sqrt(factorial(K)).
+	[math:sqrt(factorial(K)) || _ <- lists:seq(1,200)].
 cache_slow_func(K) ->
 	e2qc:cache(slow_func, K, fun() ->
 		slow_func(K)
@@ -163,7 +163,7 @@ bench_t_tester() ->
 	% generate 100 +ve ints to be keys that are vaguely normally distributed
 	% (we just add some uniform random numbers together, it will have enough
 	% of a hump for our purposes, see central limit theorem)
-	Nums = [round(4*lists:sum(
+	Nums = [100 + round(4*lists:sum(
 			[crypto:rand_uniform(1,1000) / 1000 || _ <- lists:seq(1,15)]))
 		|| _ <- lists:seq(1, 70)],
 	TimesZip = [bench(Nums) || _ <- lists:seq(1,50)],
@@ -183,7 +183,7 @@ bench_t_tester() ->
 
 	?assertMatch(Df when (Df >= 40), DF),
 	?assertMatch(Tt when (Tt > 3.307), abs(T)), % t-value threshold for 99.9% confidence
-	?assert(U1 < U2).
+	?assert(T < 0).
 
 is_fast_test_() ->
 	{timeout, 60,

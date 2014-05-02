@@ -108,7 +108,7 @@ put_evict_q1_test() ->
 	ok = put(put_evict_q1, <<11>>, <<11>>),
 	% 1s should always be enough for the bg_thread to wake up
 	% (usually happens within 1ms or so)
-	timer:sleep(2000),
+	timer:sleep(3000),
 	?assertMatch(notfound, get(put_evict_q1, <<2>>)),
 	?assertMatch(<<1>>, get(put_evict_q1, <<1>>)),
 	?assertMatch(<<10>>, get(put_evict_q1, <<10>>)),
@@ -122,7 +122,7 @@ put_evict_q2_test() ->
 	% now add an extra to q1 (q1 will be < min_q1_size)
 	ok = put(put_evict_q2, <<11>>, <<11>>),
 	% sleep till bg_thread wakes up
-	timer:sleep(2000),
+	timer:sleep(3000),
 	% we should have evicted the least recently used thing on q2,
 	% which will be <<1>>
 	?assertMatch(notfound, get(put_evict_q2, <<1>>)),
