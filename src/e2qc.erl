@@ -25,6 +25,8 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
+%% @author Alex Wilson <alex@uq.edu.au>
+%% @doc e2qc public API
 -module(e2qc).
 
 -export([cache/3, setup/2, stats/1, evict/2, teardown/1]).
@@ -32,15 +34,24 @@
 -define(DEFAULT_MAX_SIZE, 4*1024*1024).
 -define(DEFAULT_Q1_MIN_SIZE, round(0.3 * ?DEFAULT_MAX_SIZE)).
 
+%% @doc Cache an operation using the given key.
+%%
+%% ValFun is a zero-argument fun that computes some expensive operation
+%% and returns any term. The call to cache/3 will return that term, either
+%% by running the fun, or consulting the named Cache for Key.
 -spec cache(Cache :: atom(), Key :: term(), ValFun :: function()) -> term().
 cache(Cache, Key, ValFun) ->
-	KeyBin = if is_binary(Key) -> Key; is_integer(Key) -> binary:encode_unsigned(Key); true -> term_to_binary(Key) end,
+	KeyBin = key_to_bin(Key),
 	case e2qc_nif:get(Cache, KeyBin) of
 		notfound ->
 			Val = ValFun(),
-			ValBin = if is_binary(Val) ->
-				<<1, Val/binary>>;
-			true -> V = term_to_binary(Val), <<2, V/binary>> end,
+			ValBin = if 
+				is_binary(Val) ->
+					<<1, Val/binary>>;
+				true ->
+					V = term_to_binary(Val),
+					<<2, V/binary>>
+			end,
 			ok = e2qc_nif:put(Cache, KeyBin, ValBin,
 				?DEFAULT_MAX_SIZE, ?DEFAULT_Q1_MIN_SIZE),
 			Val;
@@ -49,18 +60,26 @@ cache(Cache, Key, ValFun) ->
 		_ -> error(badcache)
 	end.
 
+%% @doc Remove an entry from a cache.
 -spec evict(Cache :: atom(), Key :: term()) -> ok | notfound.
 evict(Cache, Key) ->
-	KeyBin = if is_binary(Key) -> Key; is_integer(Key) -> binary:encode_unsigned(Key); true -> term_to_binary(Key) end,
+	KeyBin = key_to_bin(Key),
 	e2qc_nif:destroy(Cache, KeyBin).
 
+%% @doc Tear-down a cache, destroying all entries and settings.
 -spec teardown(Cache :: atom()) -> ok | notfound.
 teardown(Cache) ->
 	e2qc_nif:destroy(Cache).
 
--spec setup(Cache :: atom(), Config :: [{K :: atom(), V :: term()}]) -> ok.
+-type max_size_setting() :: {size | max_size, Bytes :: integer()}.
+-type q1_size_setting() :: {ratio, Ratio :: float()} | {min_q1_size, Bytes :: integer()}.
+-type setting() :: max_size_setting() | q1_size_setting().
+
+%% @doc Configure a cache with given settings.
+-spec setup(Cache :: atom(), Config :: [setting()]) -> ok.
 setup(Cache, Config) ->
-	MaxSize = proplists:get_value(max_size, Config, proplists:get_value(size, Config, ?DEFAULT_MAX_SIZE)),
+	MaxSize = proplists:get_value(max_size, Config, 
+		proplists:get_value(size, Config, ?DEFAULT_MAX_SIZE)),
 	MinQ1Size = case proplists:get_value(min_q1_size, Config) of
 		undefined ->
 			R = proplists:get_value(ratio, Config, 0.3),
@@ -73,10 +92,22 @@ setup(Cache, Config) ->
 		ok -> ok
 	end.
 
--spec stats(Cache :: atom()) -> [{K :: atom(), V :: term()}].
+-type cache_stat() :: {hits | misses | q1size | q2size, Value :: integer()}.
+
+%% @doc Gather some basic statistics about a cache.
+-spec stats(Cache :: atom()) -> [cache_stat()].
 stats(Cache) ->
 	case e2qc_nif:stats(Cache) of
 		notfound -> [{hits, 0}, {misses, 0}, {q1size, 0}, {q2size, 0}];
 		{Hits, Misses, Q1Size, Q2Size} ->
 			[{hits, Hits}, {misses, Misses}, {q1size, Q1Size}, {q2size, Q2Size}]
 	end.
+
+%% @private
+-spec key_to_bin(term()) -> binary().
+key_to_bin(Key) when is_binary(Key) ->
+	Key;
+key_to_bin(Key) when is_integer(Key) and (Key >= 0) ->
+	binary:encode_unsigned(Key);
+key_to_bin(Key) ->
+	term_to_binary(Key).

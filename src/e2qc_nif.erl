@@ -31,6 +31,7 @@
 
 -on_load(init/0).
 
+%% @private
 init() ->
 	SoName = case code:priv_dir(e2qc) of
 	    {error, bad_name} ->
@@ -45,30 +46,37 @@ init() ->
     end,
 	ok = erlang:load_nif(SoName, 0).
 
+%% @private
 -spec get(Cache :: atom(), Key :: binary()) -> notfound | binary().
 get(_Cache, _Key) ->
 	error(badnif).
 
+%% @private
 -spec put(Cache :: atom(), Key :: binary(), Val :: binary()) -> ok.
 put(_Cache, _Key, _Val) ->
 	error(badnif).
 
+%% @private
 -spec put(Cache :: atom(), Key :: binary(), Val :: binary(), MaxSize :: integer(), MinQ1Size :: integer()) -> ok.
 put(_Cache, _Key, _Val, _MaxSize, _MinQ1Size) ->
 	error(badnif).
 
+%% @private
 -spec create(Cache :: atom(), MaxSize :: integer(), MinQ1Size :: integer()) -> already_exists | ok.
 create(_Cache, _MaxSize, _MinQ1Size) ->
 	error(badnif).
 
+%% @private
 -spec destroy(Cache :: atom()) -> notfound | ok.
 destroy(_Cache) ->
 	error(badnif).
 
+%% @private
 -spec destroy(Cache :: atom(), Key :: binary()) -> notfound | ok.
 destroy(_Cache, _Key) ->
 	error(badnif).
 
+%% @private
 -spec stats(Cache :: atom()) -> notfound | {Hits :: integer(), Misses :: integer(), Q1Size :: integer(), Q2Size :: integer()}.
 stats(_Cache) ->
 	error(badnif).
