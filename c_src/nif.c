@@ -181,22 +181,18 @@ static void *
 cache_bg_thread(void *arg)
 {
 	struct cache *c = (struct cache *)arg;
-	int lastloop = 0;
 
 	while (1) {
+		enif_mutex_lock(c->ctrl_lock);
+
+		/* sleep until there is work to do */
+		enif_cond_wait(c->check_cond, c->ctrl_lock);
+
+		/* we have to let go of ctrl_lock so we can take cache_lock then
+		   ctrl_lock again to get them back in the right order */
+		enif_mutex_unlock(c->ctrl_lock);
 		enif_rwlock_rwlock(c->cache_lock);
 		enif_mutex_lock(c->ctrl_lock);
-		if (!lastloop) {
-			enif_rwlock_rwunlock(c->cache_lock);
-			enif_cond_wait(c->check_cond, c->ctrl_lock);
-
-			/* we have to let go of ctrl_lock so we can take cache_lock then
-			   ctrl_lock again to get them back in the right order */
-			enif_mutex_unlock(c->ctrl_lock);
-			enif_rwlock_rwlock(c->cache_lock);
-			enif_mutex_lock(c->ctrl_lock);
-		}
-		lastloop = 0;
 
 		/* if we've been told to die, quit this loop and start cleaning up */
 		if (c->flags & FL_DYING) {
@@ -228,7 +224,6 @@ cache_bg_thread(void *arg)
 			}
 
 			enif_free(n);
-			lastloop = 1;
 
 			/* take the ctrl_lock back again for the next loop around */
 			enif_mutex_lock(c->ctrl_lock);
@@ -261,7 +256,6 @@ cache_bg_thread(void *arg)
 
 			enif_mutex_unlock(c->ctrl_lock);
 			enif_rwlock_rwunlock(c->lookup_lock);
-			lastloop = 1;
 		}
 
 		/* now let go of the cache_lock that we took right back at the start of
@@ -628,7 +622,6 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		enif_mutex_lock(c->ctrl_lock);
 		TAILQ_INSERT_TAIL(&(c->incr_head), in, entry);
 		enif_mutex_unlock(c->ctrl_lock);
-		enif_cond_broadcast(c->check_cond);
 
 		ret = enif_make_resource_binary(env, n->val, n->val, n->vsize);
 		enif_rwlock_runlock(c->lookup_lock);
