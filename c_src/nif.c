@@ -123,7 +123,7 @@ struct cache {
 /* a node in the RB tree of atom -> struct cache */
 struct atom_node {
 	RB_ENTRY(atom_node) entry;
-	char *atom;					/* from enif_alloc */
+	ERL_NIF_TERM atom;					/* inside atom_env */
 	struct cache *cache;
 };
 
@@ -131,6 +131,7 @@ struct nif_globals {
 	RB_HEAD(atom_tree, atom_node) atom_head;
 	int atom_count;
 	ErlNifRWLock *atom_lock;
+	ErlNifEnv *atom_env;
 };
 
 /* the resource type used for struct cache_node -> val */
@@ -142,7 +143,7 @@ static struct nif_globals *gbl;
 static int
 atom_tree_cmp(struct atom_node *a1, struct atom_node *a2)
 {
-	return strcmp(a1->atom, a2->atom);
+	return enif_compare(a1->atom, a2->atom);
 }
 
 RB_GENERATE(atom_tree, atom_node, entry, atom_tree_cmp);
@@ -321,7 +322,7 @@ cache_bg_thread(void *arg)
 }
 
 static struct cache *
-get_cache(char *atom)
+get_cache(ERL_NIF_TERM atom)
 {
 	struct atom_node n, *res;
 	struct cache *ret = NULL;
@@ -339,7 +340,7 @@ get_cache(char *atom)
 }
 
 static struct cache *
-new_cache(char *atom, int max_size, int min_q1_size)
+new_cache(ERL_NIF_TERM atom, int max_size, int min_q1_size)
 {
 	struct cache *c;
 	struct atom_node *an;
@@ -358,7 +359,7 @@ new_cache(char *atom, int max_size, int min_q1_size)
 
 	an = enif_alloc(sizeof(*an));
 	memset(an, 0, sizeof(*an));
-	an->atom = atom;
+	an->atom = enif_make_copy(gbl->atom_env, atom);
 	an->cache = c;
 
 	c->atom_node = an;
@@ -379,21 +380,16 @@ new_cache(char *atom, int max_size, int min_q1_size)
 static ERL_NIF_TERM
 destroy(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
-	unsigned int alen;
-	char *atom;
+	ERL_NIF_TERM atom;
 	struct cache *c;
 	ErlNifBinary kbin;
 	struct cache_node *n;
 
-	if (!enif_get_atom_length(env, argv[0], &alen, ERL_NIF_LATIN1))
+	if (!enif_is_atom(env, argv[0]))
 		return enif_make_badarg(env);
-	atom = enif_alloc(alen + 1);
-	if (!enif_get_atom(env, argv[0], atom, alen + 1, ERL_NIF_LATIN1))
-		goto badarg;
+	atom = argv[0];
 
 	if ((c = get_cache(atom))) {
-		enif_free(atom);
-
 		if (argc == 2) {
 			if (!enif_inspect_binary(env, argv[1], &kbin))
 				return enif_make_badarg(env);
@@ -434,38 +430,29 @@ destroy(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		}
 
 		return enif_make_atom(env, "ok");
-	} else {
-		enif_free(atom);
-		return enif_make_atom(env, "notfound");
 	}
 
-badarg:
-	enif_free(atom);
-	return enif_make_badarg(env);
+	return enif_make_atom(env, "notfound");
 }
 
 /* create(Cache :: atom(), MaxSize :: integer(), MinQ1Size :: integer()) */
 static ERL_NIF_TERM
 create(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
-	unsigned int alen;
-	char *atom;
+	ERL_NIF_TERM atom;
 	ErlNifUInt64 max_size, min_q1_size;
 	struct cache *c;
 
-	if (!enif_get_atom_length(env, argv[0], &alen, ERL_NIF_LATIN1))
+	if (!enif_is_atom(env, argv[0]))
 		return enif_make_badarg(env);
-	atom = enif_alloc(alen + 1);
-	if (!enif_get_atom(env, argv[0], atom, alen + 1, ERL_NIF_LATIN1))
-		goto badarg;
+	atom = argv[0];
 
 	if (!enif_get_uint64(env, argv[1], &max_size))
-		goto badarg;
+		return enif_make_badarg(env);
 	if (!enif_get_uint64(env, argv[2], &min_q1_size))
-		goto badarg;
+		return enif_make_badarg(env);
 
 	if ((c = get_cache(atom))) {
-		enif_free(atom);
 		enif_consume_timeslice(env, 5);
 		return enif_make_atom(env, "already_exists");
 	} else {
@@ -473,72 +460,53 @@ create(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		enif_consume_timeslice(env, 20);
 		return enif_make_atom(env, "ok");
 	}
-
-badarg:
-	enif_free(atom);
-	return enif_make_badarg(env);
 }
 
 static ERL_NIF_TERM
 stats(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
-	unsigned int alen;
-	char *atom;
+	ERL_NIF_TERM atom;
 	ERL_NIF_TERM ret, q1s, q2s;
 	struct cache *c;
 
-	if (!enif_get_atom_length(env, argv[0], &alen, ERL_NIF_LATIN1))
+	if (!enif_is_atom(env, argv[0]))
 		return enif_make_badarg(env);
-	atom = enif_alloc(alen + 1);
-	if (!enif_get_atom(env, argv[0], atom, alen + 1, ERL_NIF_LATIN1))
-		goto badarg;
+	atom = argv[0];
 
 	if ((c = get_cache(atom))) {
-		enif_free(atom);
 		enif_rwlock_rlock(c->cache_lock);
 		q1s = enif_make_uint64(env, c->q1.size);
 		q2s = enif_make_uint64(env, c->q2.size);
 		enif_rwlock_runlock(c->cache_lock);
-		enif_mutex_lock(c->ctrl_lock);
 		ret = enif_make_tuple4(env,
 			enif_make_uint64(env, c->hit),
 			enif_make_uint64(env, c->miss),
 			q1s, q2s);
-		enif_mutex_unlock(c->ctrl_lock);
 		enif_consume_timeslice(env, 10);
 		return ret;
 	} else {
-		enif_free(atom);
 		return enif_make_atom(env, "notfound");
 	}
-
-badarg:
-	enif_free(atom);
-	return enif_make_badarg(env);
 }
 
 static ERL_NIF_TERM
 put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
-	unsigned int alen;
-	char *atom;
+	ERL_NIF_TERM atom;
 	ErlNifBinary kbin, vbin;
 	struct cache *c;
 	struct cache_node *n;
 
-	if (!enif_get_atom_length(env, argv[0], &alen, ERL_NIF_LATIN1))
+	if (!enif_is_atom(env, argv[0]))
 		return enif_make_badarg(env);
-	atom = enif_alloc(alen + 1);
-	if (!enif_get_atom(env, argv[0], atom, alen + 1, ERL_NIF_LATIN1))
-		goto badarg;
+	atom = argv[0];
 
 	if (!enif_inspect_binary(env, argv[1], &kbin))
-		goto badarg;
+		return enif_make_badarg(env);
 	if (!enif_inspect_binary(env, argv[2], &vbin))
-		goto badarg;
+		return enif_make_badarg(env);
 
 	if ((c = get_cache(atom))) {
-		enif_free(atom);
 		enif_consume_timeslice(env, 1);
 
 	} else {
@@ -577,34 +545,26 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	enif_consume_timeslice(env, 50);
 
 	return enif_make_atom(env, "ok");
-badarg:
-	enif_free(atom);
-	return enif_make_badarg(env);
 }
 
 static ERL_NIF_TERM
 get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
-	unsigned int alen;
-	char *atom;
+	ERL_NIF_TERM atom;
 	ErlNifBinary kbin;
 	struct cache *c;
 	struct cache_node *n;
 	struct cache_incr_node *in;
 	ERL_NIF_TERM ret;
 
-	if (!enif_get_atom_length(env, argv[0], &alen, ERL_NIF_LATIN1))
+	if (!enif_is_atom(env, argv[0]))
 		return enif_make_badarg(env);
-	atom = enif_alloc(alen + 1);
-	if (!enif_get_atom(env, argv[0], atom, alen + 1, ERL_NIF_LATIN1))
-		goto badarg;
+	atom = argv[0];
 
 	if (!enif_inspect_binary(env, argv[1], &kbin))
-		goto badarg;
+		return enif_make_badarg(env);
 
 	if ((c = get_cache(atom))) {
-		enif_free(atom);
-
 		enif_rwlock_rlock(c->lookup_lock);
 		HASH_FIND(hh, c->lookup, kbin.data, kbin.size, n);
 		if (!n) {
@@ -630,14 +590,9 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 		return ret;
 
-	} else {
-		enif_free(atom);
-		return enif_make_atom(env, "notfound");
 	}
 
-badarg:
-	enif_free(atom);
-	return enif_make_badarg(env);
+	return enif_make_atom(env, "notfound");
 }
 
 static int
@@ -649,6 +604,7 @@ load_cb(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info)
 	memset(gbl, 0, sizeof(*gbl));
 	RB_INIT(&(gbl->atom_head));
 	gbl->atom_lock = enif_rwlock_create("gbl->atom_lock");
+	gbl->atom_env = enif_alloc_env();
 
 	value_type = enif_open_resource_type(env, NULL, "value", NULL,
 		ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER, &tried);
@@ -681,6 +637,7 @@ unload_cb(ErlNifEnv *env, void *priv_data)
 
 	enif_rwlock_rwunlock(gbl->atom_lock);
 	enif_rwlock_destroy(gbl->atom_lock);
+	enif_clear_env(gbl->atom_env);
 	enif_free(gbl);
 
 	gbl = NULL;
