@@ -29,6 +29,10 @@
 %% @doc e2qc public API
 -module(e2qc).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([cache/3, setup/2, stats/1, evict/2, teardown/1]).
 
 -define(DEFAULT_MAX_SIZE, 4*1024*1024).
@@ -111,3 +115,6 @@ key_to_bin(Key) when is_integer(Key) and (Key >= 0) ->
 	binary:encode_unsigned(Key);
 key_to_bin(Key) ->
 	term_to_binary(Key).
+
+-ifdef(TEST).
+-endif.
