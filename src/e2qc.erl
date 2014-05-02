@@ -82,15 +82,7 @@ teardown(Cache) ->
 %% @doc Configure a cache with given settings.
 -spec setup(Cache :: atom(), Config :: [setting()]) -> ok.
 setup(Cache, Config) ->
-	MaxSize = proplists:get_value(max_size, Config, 
-		proplists:get_value(size, Config, ?DEFAULT_MAX_SIZE)),
-	MinQ1Size = case proplists:get_value(min_q1_size, Config) of
-		undefined ->
-			R = proplists:get_value(ratio, Config, 0.3),
-			round(R * MaxSize);
-		V when is_integer(V) -> V;
-		V when is_float(V) -> round(V)
-	end,
+	{MaxSize, MinQ1Size} = process_settings(Config),
 	case e2qc_nif:create(Cache, MaxSize, MinQ1Size) of
 		already_exists -> error(already_exists);
 		ok -> ok
@@ -108,6 +100,20 @@ stats(Cache) ->
 	end.
 
 %% @private
+-spec process_settings([setting()]) -> {MaxSize :: integer(), MinQ1Size :: integer()}.
+process_settings(Config) ->
+	MaxSize = proplists:get_value(max_size, Config, 
+		proplists:get_value(size, Config, ?DEFAULT_MAX_SIZE)),
+	MinQ1Size = case proplists:get_value(min_q1_size, Config) of
+		undefined ->
+			R = proplists:get_value(ratio, Config, 0.3),
+			round(R * MaxSize);
+		V when is_integer(V) -> V;
+		V when is_float(V) -> round(V)
+	end,
+	{MaxSize, MinQ1Size}.
+
+%% @private
 -spec key_to_bin(term()) -> binary().
 key_to_bin(Key) when is_binary(Key) ->
 	Key;
@@ -117,4 +123,70 @@ key_to_bin(Key) ->
 	term_to_binary(Key).
 
 -ifdef(TEST).
+
+settings_test() ->
+	?assertMatch({100, A} when is_integer(A), process_settings([{size, 100}])),
+	?assertMatch({100, A} when is_integer(A), process_settings([{max_size, 100}])),
+	?assertMatch({100, 30}, process_settings([{size, 100}, {ratio, 0.3}])),
+	?assertMatch({100, 41}, process_settings([{size, 100}, {min_q1_size, 41}])).
+
+cache_miss_test() ->
+	?assertMatch(notfound, e2qc_nif:get(cache_miss, key_to_bin(1500))),
+	?assertMatch({foo, bar}, cache(cache_miss, 1500, fun() -> {foo, bar} end)),
+	?assertMatch(B when is_binary(B), e2qc_nif:get(cache_miss, key_to_bin(1500))).
+
+cache_hit_test() ->
+	?assertMatch({foo, bar}, cache(cache_hit, 1500, fun() -> {foo, bar} end)),
+	?assertMatch({foo, bar}, cache(cache_hit, 1500, fun() -> {notfoo, notbar} end)).
+
+factorial(1) -> 1;
+factorial(N) when is_integer(N) and (N > 1) -> N * factorial(N-1).
+
+slow_func(K) ->
+	math:sqrt(factorial(K)).
+cache_slow_func(K) ->
+	e2qc:cache(slow_func, K, fun() ->
+		slow_func(K)
+	end).
+mean(List) -> lists:sum(List) / length(List).
+dev(List) -> U = mean(List), mean([(N-U)*(N-U) || N <- List]).
+bench(Nums) ->
+	e2qc_nif:destroy(slow_func),
+	T1 = os:timestamp(),
+	[slow_func(N) || N <- Nums],
+	T2 = os:timestamp(),
+	[cache_slow_func(N) || N <- Nums],
+	T3 = os:timestamp(),
+	{timer:now_diff(T2, T1) / length(Nums), 
+		timer:now_diff(T3, T2) / length(Nums)}.
+bench_t_tester() ->
+	% generate 100 +ve ints to be keys that are vaguely normally distributed
+	% (we just add some uniform random numbers together, it will have enough
+	% of a hump for our purposes, see central limit theorem)
+	Nums = [round(4*lists:sum(
+			[crypto:rand_uniform(1,1000) / 1000 || _ <- lists:seq(1,15)]))
+		|| _ <- lists:seq(1, 70)],
+	TimesZip = [bench(Nums) || _ <- lists:seq(1,50)],
+	{NoCacheTimes, CacheTimes} = lists:unzip(TimesZip),
+
+	N = length(CacheTimes),
+	S1 = dev(CacheTimes),
+	S2 = dev(NoCacheTimes),
+	U1 = mean(CacheTimes),
+	U2 = mean(NoCacheTimes),
+
+	% compute t-value
+	T = (U1 - U2) / math:sqrt(S1/N + S2/N),
+	DF = math:pow(S1/N + S2/N, 2) / ((S1/N)*(S1/N) / (N-1) + (S2/N)*(S2/N) / (N-1)),
+	io:format("N = ~p, S1 = ~p, S2 = ~p, U1 = ~p, U2 = ~p, T = ~p, DF = ~p",
+		[N, S1, S2, U1, U2, T, DF]),
+
+	?assertMatch(Df when (Df >= 40), DF),
+	?assertMatch(Tt when (Tt > 3.307), abs(T)).
+			% t-value threshold for 99.9% confidence at given DF
+
+is_fast_test_() ->
+	{timeout, 60,
+	fun() -> bench_t_tester() end}.
+
 -endif.
