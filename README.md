@@ -2,7 +2,9 @@ Erlang 2Q NIF cache.
 
 This is an implementation of the 2Q Cache Management algorithm (http://www.inf.fu-berlin.de/lehre/WS10/DBS-Tech/Reader/2QBufferManagement.pdf) as an Erlang NIF.
 
-Its primary goals are:
+2Q is a refinement of the classic LRU (Least-Recently-Used) cache management algorithm that achieves better hit rates with many common workloads -- especially those that benefit from rejection of sequential scans. In the worst case, it performs no worse than plain LRU and still retains much of its simplicity.
+
+This implementation's primary goals are:
  * a *very* simple to use API, easy to integrate into your project
  * high performance when having high hit rate (ie, hits being fast is preferred over misses being fast)
 
