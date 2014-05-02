@@ -186,6 +186,13 @@ cache_bg_thread(void *arg)
 	while (1) {
 		enif_mutex_lock(c->ctrl_lock);
 
+		/* if we've been told to die, quit this loop and start cleaning up */
+		if (c->flags & FL_DYING) {
+			enif_mutex_unlock(c->ctrl_lock);
+			enif_rwlock_rwunlock(c->cache_lock);
+			break;
+		}
+
 		/* sleep until there is work to do */
 		enif_cond_wait(c->check_cond, c->ctrl_lock);
 
@@ -194,13 +201,6 @@ cache_bg_thread(void *arg)
 		enif_mutex_unlock(c->ctrl_lock);
 		enif_rwlock_rwlock(c->cache_lock);
 		enif_mutex_lock(c->ctrl_lock);
-
-		/* if we've been told to die, quit this loop and start cleaning up */
-		if (c->flags & FL_DYING) {
-			enif_mutex_unlock(c->ctrl_lock);
-			enif_rwlock_rwunlock(c->cache_lock);
-			break;
-		}
 
 		while (!TAILQ_EMPTY(&(c->incr_head))) {
 			struct cache_incr_node *n;
