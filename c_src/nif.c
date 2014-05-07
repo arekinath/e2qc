@@ -453,8 +453,25 @@ create(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		return enif_make_badarg(env);
 
 	if ((c = get_cache(atom))) {
+		ERL_NIF_TERM ret = enif_make_atom(env, "already_exists");
 		enif_consume_timeslice(env, 5);
-		return enif_make_atom(env, "already_exists");
+
+		enif_rwlock_rwlock(c->cache_lock);
+		/* expansion is safe because we don't have to engage the background
+		   thread and won't cause sudden eviction pressure 
+		   TODO: a nice way to shrink the cache without seizing it up */
+		if (c->max_size < max_size && c->min_q1_size < min_q1_size) {
+			c->max_size = max_size;
+			c->min_q1_size = min_q1_size;
+			enif_rwlock_rwunlock(c->cache_lock);
+
+			ret = enif_make_atom(env, "ok");
+			enif_consume_timeslice(env, 10);
+		} else {
+			enif_rwlock_rwunlock(c->cache_lock);
+		}
+
+		return ret;
 	} else {
 		c = new_cache(atom, max_size, min_q1_size);
 		enif_consume_timeslice(env, 20);

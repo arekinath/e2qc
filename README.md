@@ -46,7 +46,7 @@ If you want to adjust the `size` of the cache, or set a different Q1 `ratio` (se
 
 Put this in your startup procedure somewhere and it will configure the `slow_thing` cache with a 16MB size instead of the default 4MB, and a Q1 ratio of 0.4 (the value for the target size of Q1 during eviction will be 6.4MB).
 
-Currently, the call to `e2qc:setup/2` has to happen before the cache is used for the first time (this will be fixed later).
+Currently, if you make a call to `e2qc:setup/2` with a size that is smaller than the default, the call has to happen before the cache is used for the first time (otherwise it will throw an error). Fixing this is an open TODO.
 
 ## Statistics
 
@@ -67,5 +67,5 @@ You can also destroy an entire cache if you wish, using `e2qc:teardown/1`. This 
 
 ## TODO
 
- * Calls to `e2qc:setup/2` after cache has already started
+ * Shrinking with `e2qc:setup/2` after cache has already started
  * Timed eviction (expiry)

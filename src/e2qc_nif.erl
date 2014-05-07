@@ -132,6 +132,25 @@ put_evict_q2_test() ->
 	?assertMatch(<<3>>, get(put_evict_q2, <<3>>)),
 	?assertMatch(<<11>>, get(put_evict_q2, <<11>>)).
 
+expand_test() ->
+	ok = create(expand, 20, 10),
+	[ok = put(expand, <<N>>, <<N>>) || N <- lists:seq(1,10)],
+	% these gets will promote 1 and 10 to q2, so <<2>> will be first
+	% to be evicted
+	?assertMatch(<<1>>, get(expand, <<1>>)),
+	?assertMatch(<<10>>, get(expand, <<10>>)),
+	ok = create(expand, 50, 20),
+	ok = put(expand, <<11>>, <<11>>),
+	% 1s should always be enough for the bg_thread to wake up
+	% (usually happens within 1ms or so)
+	timer:sleep(2000),
+	ok = put(expand, <<12>>, <<12>>),
+	timer:sleep(2000),
+	?assertMatch(<<2>>, get(expand, <<2>>)),
+	?assertMatch(<<1>>, get(expand, <<1>>)),
+	?assertMatch(<<10>>, get(expand, <<10>>)),
+	?assertMatch(<<11>>, get(expand, <<11>>)).
+
 destroy_key_test() ->
 	ok = create(destroy_key, 20, 10),
 	?assertMatch(notfound, destroy(destroy_key, <<"foo">>)),
