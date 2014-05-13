@@ -48,6 +48,19 @@ Put this in your startup procedure somewhere and it will configure the `slow_thi
 
 Currently, if you make a call to `e2qc:setup/2` with a size that is smaller than the default, the call has to happen before the cache is used for the first time (otherwise it will throw an error). Fixing this is an open TODO.
 
+## Using timed eviction (expiry)
+
+There is also support now for timed eviction or expiry of entries. This is also easy to use -- just call `e2qc:cache/4` instead of `e2qc:cache/3`:
+
+    ```
+    some_function(Input) ->
+        e2qc:cache(slow_thing, Input, 30, fun() ->
+            do_slow_thing(Input)
+        end).
+    ```
+
+This will keep the cache entries for a maximum of 30 seconds and then automatically evict them. The argument is in seconds and not milliseconds (like most other Erlang timers), because to keep the overhead of expiry to a minimum, e2qc sacrifices precision on this parameter. If you need high-precision expiry times, you should use a normal timer and a call to `e2qc:evict/2`.
+
 ## Statistics
 
 The `e2qc:stats/1` function is useful if you want to know how your cache is doing:
@@ -68,4 +81,3 @@ You can also destroy an entire cache if you wish, using `e2qc:teardown/1`. This 
 ## TODO
 
  * Shrinking with `e2qc:setup/2` after cache has already started
- * Timed eviction (expiry)
