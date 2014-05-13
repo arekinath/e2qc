@@ -512,7 +512,7 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	ERL_NIF_TERM atom;
 	ErlNifBinary kbin, vbin;
 	struct cache *c;
-	struct cache_node *n;
+	struct cache_node *n, *ng;
 
 	if (!enif_is_atom(env, argv[0]))
 		return enif_make_badarg(env);
@@ -552,6 +552,12 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 	enif_rwlock_rwlock(c->cache_lock);
 	enif_rwlock_rwlock(c->lookup_lock);
+	HASH_FIND(hh, c->lookup, kbin.data, kbin.size, ng);
+	if (ng) {
+		enif_mutex_lock(c->ctrl_lock);
+		destroy_cache_node(ng);
+		enif_mutex_unlock(c->ctrl_lock);
+	}
 	TAILQ_INSERT_HEAD(&(c->q1.head), n, entry);
 	c->q1.size += n->size;
 	HASH_ADD_KEYPTR(hh, c->lookup, n->key, n->ksize, n);

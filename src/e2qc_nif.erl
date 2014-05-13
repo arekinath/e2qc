@@ -159,6 +159,13 @@ destroy_key_test() ->
 	?assertMatch(ok, destroy(destroy_key, <<"foo">>)),
 	?assertMatch(notfound, get(destroy_key, <<"foo">>)).
 
+put_overwrite_test() ->
+	ok = create(put_overwrite, 20, 10),
+	ok = put(put_overwrite, <<"foo">>, <<"bar">>),
+	?assertMatch(<<"bar">>, get(put_overwrite, <<"foo">>)),
+	ok = put(put_overwrite, <<"foo">>, <<"foobar">>),
+	?assertMatch(<<"foobar">>, get(put_overwrite, <<"foo">>)).
+
 destroy_cache_test() ->
 	ok = create(destroy_cache, 20, 10),
 	ok = put(destroy_cache, <<"foo">>, <<"bar">>),
