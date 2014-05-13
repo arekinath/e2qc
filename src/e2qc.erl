@@ -33,7 +33,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export([cache/3, setup/2, stats/1, evict/2, teardown/1]).
+-export([cache/3, cache/4, setup/2, stats/1, evict/2, teardown/1]).
 
 -define(DEFAULT_MAX_SIZE, 4*1024*1024).
 -define(DEFAULT_Q1_MIN_SIZE, round(0.3 * ?DEFAULT_MAX_SIZE)).
@@ -47,21 +47,31 @@
 cache(Cache, Key, ValFun) ->
 	KeyBin = key_to_bin(Key),
 	case e2qc_nif:get(Cache, KeyBin) of
+		B when is_binary(B) -> bin_to_val(B);
 		notfound ->
 			Val = ValFun(),
-			ValBin = if 
-				is_binary(Val) ->
-					<<1, Val/binary>>;
-				true ->
-					V = term_to_binary(Val),
-					<<2, V/binary>>
-			end,
+			ValBin = val_to_bin(Val),
 			ok = e2qc_nif:put(Cache, KeyBin, ValBin,
 				?DEFAULT_MAX_SIZE, ?DEFAULT_Q1_MIN_SIZE),
-			Val;
-		<<1, Val/binary>> -> Val;
-		<<2, ValBin/binary>> -> binary_to_term(ValBin);
-		_ -> error(badcache)
+			Val
+	end.
+
+%% @doc Cache an operation using the given key with a timeout.
+%%
+%% As for e2qc:cache/3, but the Lifetime argument contains a number of seconds for
+%% which this cache entry should remain valid. After Lifetime seconds have elapsed,
+%% the entry is automatically evicted and will be recalculated if a miss occurs.
+-spec cache(Cache :: atom(), Key :: term(), Lifetime :: integer(), ValFun :: function()) -> term().
+cache(Cache, Key, Lifetime, ValFun) ->
+	KeyBin = key_to_bin(Key),
+	case e2qc_nif:get(Cache, KeyBin) of
+		B when is_binary(B) -> bin_to_val(B);
+		notfound ->
+			Val = ValFun(),
+			ValBin = val_to_bin(Val),
+			ok = e2qc_nif:put(Cache, KeyBin, ValBin,
+				?DEFAULT_MAX_SIZE, ?DEFAULT_Q1_MIN_SIZE, Lifetime),
+			Val
 	end.
 
 %% @doc Remove an entry from a cache.
@@ -102,7 +112,7 @@ stats(Cache) ->
 %% @private
 -spec process_settings([setting()]) -> {MaxSize :: integer(), MinQ1Size :: integer()}.
 process_settings(Config) ->
-	MaxSize = proplists:get_value(max_size, Config, 
+	MaxSize = proplists:get_value(max_size, Config,
 		proplists:get_value(size, Config, ?DEFAULT_MAX_SIZE)),
 	MinQ1Size = case proplists:get_value(min_q1_size, Config) of
 		undefined ->
@@ -121,6 +131,21 @@ key_to_bin(Key) when is_integer(Key) and (Key >= 0) ->
 	binary:encode_unsigned(Key);
 key_to_bin(Key) ->
 	term_to_binary(Key).
+
+%% @private
+-spec val_to_bin(term()) -> binary().
+val_to_bin(V) when is_binary(V) ->
+	<<1, V/binary>>;
+val_to_bin(V) ->
+	VBin = term_to_binary(V),
+	<<2, VBin/binary>>.
+
+%% @private
+-spec bin_to_val(binary()) -> term().
+bin_to_val(<<1, V/binary>>) ->
+	V;
+bin_to_val(<<2, V/binary>>) ->
+	binary_to_term(V).
 
 -ifdef(TEST).
 
@@ -157,7 +182,7 @@ bench(Nums) ->
 	T2 = os:timestamp(),
 	[cache_slow_func(N) || N <- Nums],
 	T3 = os:timestamp(),
-	{timer:now_diff(T2, T1) / length(Nums), 
+	{timer:now_diff(T2, T1) / length(Nums),
 		timer:now_diff(T3, T2) / length(Nums)}.
 bench_t_tester() ->
 	% generate 100 +ve ints to be keys that are vaguely normally distributed

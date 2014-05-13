@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
 
 #include <math.h>
 
@@ -71,12 +72,14 @@
 
 struct cache_node {
 	TAILQ_ENTRY(cache_node) entry;
+	RB_ENTRY(cache_node) expiry_entry;
 	UT_hash_handle hh;
 	char *key;			/* key buffer, from enif_alloc */
 	char *val;			/* value buffer, from enif_alloc_resource */
 	int size;			/* total size (bytes) = vsize + ksize */
 	int vsize;			/* size of value in bytes */
 	int ksize;			/* size of key in bytes */
+	struct timespec expiry;  /* expiry time */
 	struct cache *c;	/* the cache we belong to */
 	struct cache_queue *q;	/* the cache_queue we are currently on */
 };
@@ -114,6 +117,7 @@ struct cache {
 
 	struct cache_queue q1; /* protected by cache_lock */
 	struct cache_queue q2;
+	RB_HEAD(expiry_tree, cache_node) expiry_head;
 	ErlNifRWLock *cache_lock;
 
 	struct cache_node *lookup; /* a uthash, protected by lookup_lock */
@@ -148,6 +152,46 @@ atom_tree_cmp(struct atom_node *a1, struct atom_node *a2)
 
 RB_GENERATE(atom_tree, atom_node, entry, atom_tree_cmp);
 
+static int
+expiry_tree_cmp(struct cache_node *n1, struct cache_node *n2)
+{
+	if (n1->expiry.tv_sec < n2->expiry.tv_sec)
+		return -1;
+	if (n1->expiry.tv_sec > n2->expiry.tv_sec)
+		return 1;
+	if (n1->expiry.tv_nsec < n2->expiry.tv_nsec)
+		return -1;
+	if (n1->expiry.tv_nsec > n2->expiry.tv_nsec)
+		return 1;
+	return 0;
+}
+
+RB_GENERATE(expiry_tree, cache_node, expiry_entry, expiry_tree_cmp);
+
+/* platform wrapper around clock_gettime (even though it's POSIX, some
+   people, cough OSX cough, don't implement it) */
+#if defined(__MACH__)
+#	include <mach/clock.h>
+#	include <mach/mach.h>
+#endif
+
+void
+clock_now(struct timespec *ts)
+{
+#if defined(__MACH__)
+	/* this is not quite monotonic time, but hopefully it's good enough */
+	clock_serv_t cclock;
+	mach_timespec_t mts;
+	host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
+	clock_get_time(cclock, &mts);
+	mach_port_deallocate(mach_task_self(), cclock);
+	ts->tv_sec = mts.tv_sec;
+	ts->tv_nsec = mts.tv_nsec;
+#else
+	clock_gettime(CLOCK_MONOTONIC, ts);
+#endif
+}
+
 /* to call this you must have all of the caches locks held
    (cache_lock, lookup_lock and ctrl_lock)! */
 static void
@@ -159,6 +203,8 @@ destroy_cache_node(struct cache_node *n)
 	n->q->size -= n->size;
 	n->q = NULL;
 	HASH_DEL(n->c->lookup, n);
+	if (n->expiry.tv_sec != 0)
+		RB_REMOVE(expiry_tree, &(n->c->expiry_head), n);
 
 	nextin = TAILQ_FIRST(&(n->c->incr_head));
 	while ((in = nextin)) {
@@ -202,6 +248,7 @@ cache_bg_thread(void *arg)
 		enif_rwlock_rwlock(c->cache_lock);
 		enif_mutex_lock(c->ctrl_lock);
 
+		/* first process the promotion queue before we do any evicting */
 		while (!TAILQ_EMPTY(&(c->incr_head))) {
 			struct cache_incr_node *n;
 			n = TAILQ_FIRST(&(c->incr_head));
@@ -238,6 +285,22 @@ cache_bg_thread(void *arg)
 		      that are behind ctrl_lock so we should give it up for others */
 		enif_mutex_unlock(c->ctrl_lock);
 
+		/* do timed evictions -- if anything has expired, nuke it */
+		{
+			struct cache_node *n;
+			if ((n = RB_MIN(expiry_tree, &(c->expiry_head)))) {
+				struct timespec now;
+				clock_now(&now);
+				while (n && n->expiry.tv_sec < now.tv_sec) {
+					enif_mutex_lock(c->ctrl_lock);
+					destroy_cache_node(n);
+					enif_mutex_unlock(c->ctrl_lock);
+					n = RB_MIN(expiry_tree, &(c->expiry_head));
+				}
+			}
+		}
+
+		/* now check if we need to do ordinary size limit evictions */
 		if (c->q1.size + c->q2.size > c->max_size) {
 			enif_rwlock_rwlock(c->lookup_lock);
 			enif_mutex_lock(c->ctrl_lock);
@@ -356,6 +419,7 @@ new_cache(ERL_NIF_TERM atom, int max_size, int min_q1_size)
 	TAILQ_INIT(&(c->q1.head));
 	TAILQ_INIT(&(c->q2.head));
 	TAILQ_INIT(&(c->incr_head));
+	RB_INIT(&(c->expiry_head));
 
 	an = enif_alloc(sizeof(*an));
 	memset(an, 0, sizeof(*an));
@@ -458,7 +522,7 @@ create(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 		enif_rwlock_rwlock(c->cache_lock);
 		/* expansion is safe because we don't have to engage the background
-		   thread and won't cause sudden eviction pressure 
+		   thread and won't cause sudden eviction pressure
 		   TODO: a nice way to shrink the cache without seizing it up */
 		if (c->max_size < max_size && c->min_q1_size < min_q1_size) {
 			c->max_size = max_size;
@@ -513,6 +577,7 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	ErlNifBinary kbin, vbin;
 	struct cache *c;
 	struct cache_node *n, *ng;
+	ErlNifUInt64 lifetime = 0;
 
 	if (!enif_is_atom(env, argv[0]))
 		return enif_make_badarg(env);
@@ -538,6 +603,10 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		enif_consume_timeslice(env, 20);
 	}
 
+	if (argc > 5)
+		if (!enif_get_uint64(env, argv[5], &lifetime))
+			return enif_make_badarg(env);
+
 	n = enif_alloc(sizeof(*n));
 	memset(n, 0, sizeof(*n));
 	n->c = c;
@@ -549,6 +618,10 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	n->val = enif_alloc_resource(value_type, vbin.size);
 	memcpy(n->val, vbin.data, vbin.size);
 	n->q = &(c->q1);
+	if (lifetime) {
+		clock_now(&(n->expiry));
+		n->expiry.tv_sec += lifetime;
+	}
 
 	enif_rwlock_rwlock(c->cache_lock);
 	enif_rwlock_rwlock(c->lookup_lock);
@@ -561,6 +634,16 @@ put(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	TAILQ_INSERT_HEAD(&(c->q1.head), n, entry);
 	c->q1.size += n->size;
 	HASH_ADD_KEYPTR(hh, c->lookup, n->key, n->ksize, n);
+	if (lifetime) {
+		struct cache_node *rn;
+		rn = RB_INSERT(expiry_tree, &(c->expiry_head), n);
+		/* it's possible to get two timestamps that are the same, if this happens
+		   just bump us forwards by 1 usec until we're unique */
+		while (rn != NULL) {
+			++(n->expiry.tv_nsec);
+			rn = RB_INSERT(expiry_tree, &(c->expiry_head), n);
+		}
+	}
 	enif_rwlock_rwunlock(c->lookup_lock);
 	enif_rwlock_rwunlock(c->cache_lock);
 
@@ -578,6 +661,7 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	struct cache *c;
 	struct cache_node *n;
 	struct cache_incr_node *in;
+	struct timespec now;
 	ERL_NIF_TERM ret;
 
 	if (!enif_is_atom(env, argv[0]))
@@ -595,6 +679,16 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 			__sync_add_and_fetch(&c->miss, 1);
 			enif_consume_timeslice(env, 10);
 			return enif_make_atom(env, "notfound");
+		}
+
+		if (n->expiry.tv_sec != 0) {
+			clock_now(&now);
+			if (n->expiry.tv_sec < now.tv_sec) {
+				enif_rwlock_runlock(c->lookup_lock);
+				__sync_add_and_fetch(&c->miss, 1);
+				enif_consume_timeslice(env, 10);
+				return enif_make_atom(env, "notfound");
+			}
 		}
 
 		in = enif_alloc(sizeof(*in));
@@ -669,8 +763,8 @@ unload_cb(ErlNifEnv *env, void *priv_data)
 static ErlNifFunc nif_funcs[] =
 {
 	{"get", 2, get},
-	{"put", 3, put},
 	{"put", 5, put},
+	{"put", 6, put},
 	{"create", 3, create},
 	{"destroy", 1, destroy},
 	{"destroy", 2, destroy},

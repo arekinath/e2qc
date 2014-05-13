@@ -31,7 +31,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export([get/2, put/3, put/5, create/3, destroy/1, destroy/2, stats/1]).
+-export([get/2, put/3, put/5, put/6, create/3, destroy/1, destroy/2, stats/1]).
 
 -on_load(init/0).
 
@@ -56,13 +56,18 @@ get(_Cache, _Key) ->
 	error(badnif).
 
 %% @private
--spec put(Cache :: atom(), Key :: binary(), Val :: binary()) -> ok.
-put(_Cache, _Key, _Val) ->
-	error(badnif).
+%% for tests only
+put(Cache, Key, Val) ->
+	put(Cache, Key, Val, 0, 0).
 
 %% @private
 -spec put(Cache :: atom(), Key :: binary(), Val :: binary(), MaxSize :: integer(), MinQ1Size :: integer()) -> ok.
 put(_Cache, _Key, _Val, _MaxSize, _MinQ1Size) ->
+	error(badnif).
+
+%% @private
+-spec put(Cache :: atom(), Key :: binary(), Val :: binary(), MaxSize :: integer(), MinQ1Size :: integer(), Lifetime :: integer()) -> ok.
+put(_Cache, _Key, _Val, _MaxSize, _MinQ1Size, _Lifetime) ->
 	error(badnif).
 
 %% @private
@@ -93,7 +98,9 @@ get_key_notfound_test() ->
 	ok = create(get_key_test, 1024, 512),
 	?assertMatch(notfound, get(get_key_test, <<"foo">>)).
 put_implicit_create_test() ->
-	?assertError(badarg, put(put_implicit_create, <<"foo">>, <<"bar">>)).
+	?assertMatch(notfound, stats(put_implicit_create)),
+	?assertMatch(ok, put(put_implicit_create, <<"foo">>, <<"bar">>)),
+	?assertMatch(T when is_tuple(T), stats(put_implicit_create)).
 put_then_get_test() ->
 	?assertMatch(ok, put(put_then_get, <<"foo">>, <<"bar">>, 1024, 512)),
 	?assertMatch(<<"bar">>, get(put_then_get, <<"foo">>)).
@@ -172,5 +179,15 @@ destroy_cache_test() ->
 	?assertMatch(ok, destroy(destroy_cache)),
 	?assertMatch(notfound, get(destroy_cache, <<"foo">>)),
 	?assertMatch(ok, create(destroy_cache, 20, 10)).
+
+timed_expiry_test() ->
+	ok = create(timed_expiry, 20, 10),
+	ok = put(timed_expiry, <<"foo">>, <<"bar">>, 20, 10, 1),
+	?assertMatch(<<"bar">>, get(timed_expiry, <<"foo">>)),
+	timer:sleep(2000),
+	?assertMatch(notfound, get(timed_expiry, <<"foo">>)),
+	ok = put(timed_expiry, <<1>>, <<1>>),
+	timer:sleep(2000),
+	?assertMatch({_, _, Q1, Q2} when (Q1 >= 2) and (Q2 < 1), stats(timed_expiry)).
 
 -endif.
