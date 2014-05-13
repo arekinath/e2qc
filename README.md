@@ -52,12 +52,10 @@ Currently, if you make a call to `e2qc:setup/2` with a size that is smaller than
 
 There is also support now for timed eviction or expiry of entries. This is also easy to use -- just call `e2qc:cache/4` instead of `e2qc:cache/3`:
 
-    ```
     some_function(Input) ->
         e2qc:cache(slow_thing, Input, 30, fun() ->
             do_slow_thing(Input)
         end).
-    ```
 
 This will keep the cache entries for a maximum of 30 seconds and then automatically evict them. The argument is in seconds and not milliseconds (like most other Erlang timers), because to keep the overhead of expiry to a minimum, e2qc sacrifices precision on this parameter. If you need high-precision expiry times, you should use a normal timer and a call to `e2qc:evict/2`.
 
