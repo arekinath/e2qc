@@ -86,7 +86,7 @@ destroy(_Cache, _Key) ->
 	error(badnif).
 
 %% @private
--spec stats(Cache :: atom()) -> notfound | {Hits :: integer(), Misses :: integer(), Q1Size :: integer(), Q2Size :: integer()}.
+-spec stats(Cache :: atom()) -> notfound | {Hits :: integer(), Misses :: integer(), Q1Size :: integer(), Q2Size :: integer(), IncrQSize :: integer()}.
 stats(_Cache) ->
 	error(badnif).
 
@@ -188,6 +188,6 @@ timed_expiry_test() ->
 	?assertMatch(notfound, get(timed_expiry, <<"foo">>)),
 	ok = put(timed_expiry, <<1>>, <<1>>),
 	timer:sleep(2000),
-	?assertMatch({_, _, Q1, Q2} when (Q1 >= 2) and (Q2 < 1), stats(timed_expiry)).
+	?assertMatch({_, _, Q1, Q2, _} when (Q1 >= 2) and (Q2 < 1), stats(timed_expiry)).
 
 -endif.

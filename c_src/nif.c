@@ -111,6 +111,7 @@ struct cache {
 	int flags;
 
 	TAILQ_HEAD(cache_incr_q, cache_incr_node) incr_head;
+	int incr_count;
 	ErlNifMutex *ctrl_lock;
 	ErlNifCond *check_cond;
 	ErlNifTid bg_thread;
@@ -211,6 +212,7 @@ destroy_cache_node(struct cache_node *n)
 		nextin = TAILQ_NEXT(in, entry);
 		if (in->node == n) {
 			TAILQ_REMOVE(&(n->c->incr_head), in, entry);
+			--(n->c->incr_count);
 			in->node = 0;
 			enif_free(in);
 		}
@@ -253,6 +255,7 @@ cache_bg_thread(void *arg)
 			struct cache_incr_node *n;
 			n = TAILQ_FIRST(&(c->incr_head));
 			TAILQ_REMOVE(&(c->incr_head), n, entry);
+			--(c->incr_count);
 
 			/* let go of the ctrl_lock here, we don't need it when we aren't looking
 			   at the incr_queue, and this way other threads can use it while we shuffle
@@ -547,7 +550,7 @@ static ERL_NIF_TERM
 stats(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
 	ERL_NIF_TERM atom;
-	ERL_NIF_TERM ret, q1s, q2s;
+	ERL_NIF_TERM ret, q1s, q2s, incrs;
 	struct cache *c;
 
 	if (!enif_is_atom(env, argv[0]))
@@ -558,11 +561,12 @@ stats(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		enif_rwlock_rlock(c->cache_lock);
 		q1s = enif_make_uint64(env, c->q1.size);
 		q2s = enif_make_uint64(env, c->q2.size);
+		incrs = enif_make_uint64(env, c->incr_count);
 		enif_rwlock_runlock(c->cache_lock);
-		ret = enif_make_tuple4(env,
+		ret = enif_make_tuple5(env,
 			enif_make_uint64(env, c->hit),
 			enif_make_uint64(env, c->miss),
-			q1s, q2s);
+			q1s, q2s, incrs);
 		enif_consume_timeslice(env, 10);
 		return ret;
 	} else {
@@ -662,6 +666,7 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	struct cache_node *n;
 	struct cache_incr_node *in;
 	struct timespec now;
+	int incrqs;
 	ERL_NIF_TERM ret;
 
 	if (!enif_is_atom(env, argv[0]))
@@ -698,10 +703,14 @@ get(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 		enif_mutex_lock(c->ctrl_lock);
 		TAILQ_INSERT_TAIL(&(c->incr_head), in, entry);
+		incrqs = ++(c->incr_count);
 		enif_mutex_unlock(c->ctrl_lock);
 
 		ret = enif_make_resource_binary(env, n->val, n->val, n->vsize);
 		enif_rwlock_runlock(c->lookup_lock);
+
+		if (incrqs > 1024)
+			enif_cond_broadcast(c->check_cond);
 
 		enif_consume_timeslice(env, 20);
 

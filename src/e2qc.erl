@@ -98,15 +98,15 @@ setup(Cache, Config) ->
 		ok -> ok
 	end.
 
--type cache_stat() :: {hits | misses | q1size | q2size, Value :: integer()}.
+-type cache_stat() :: {hits | misses | q1size | q2size | incrq_size, Value :: integer()}.
 
 %% @doc Gather some basic statistics about a cache.
 -spec stats(Cache :: atom()) -> [cache_stat()].
 stats(Cache) ->
 	case e2qc_nif:stats(Cache) of
-		notfound -> [{hits, 0}, {misses, 0}, {q1size, 0}, {q2size, 0}];
-		{Hits, Misses, Q1Size, Q2Size} ->
-			[{hits, Hits}, {misses, Misses}, {q1size, Q1Size}, {q2size, Q2Size}]
+		notfound -> [{hits, 0}, {misses, 0}, {q1size, 0}, {q2size, 0}, {incrq_size, 0}];
+		{Hits, Misses, Q1Size, Q2Size, IncrQSize} ->
+			[{hits, Hits}, {misses, Misses}, {q1size, Q1Size}, {q2size, Q2Size}, {incrq_size, IncrQSize}]
 	end.
 
 %% @private
