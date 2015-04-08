@@ -53,7 +53,7 @@ init() ->
 %% @private
 -spec get(Cache :: atom(), Key :: binary()) -> notfound | binary().
 get(_Cache, _Key) ->
-	error(badnif).
+	erlang:nif_error(badnif).
 
 %% @private
 %% for tests only
@@ -63,32 +63,32 @@ put(Cache, Key, Val) ->
 %% @private
 -spec put(Cache :: atom(), Key :: binary(), Val :: binary(), MaxSize :: integer(), MinQ1Size :: integer()) -> ok.
 put(_Cache, _Key, _Val, _MaxSize, _MinQ1Size) ->
-	error(badnif).
+	erlang:nif_error(badnif).
 
 %% @private
 -spec put(Cache :: atom(), Key :: binary(), Val :: binary(), MaxSize :: integer(), MinQ1Size :: integer(), Lifetime :: integer()) -> ok.
 put(_Cache, _Key, _Val, _MaxSize, _MinQ1Size, _Lifetime) ->
-	error(badnif).
+	erlang:nif_error(badnif).
 
 %% @private
 -spec create(Cache :: atom(), MaxSize :: integer(), MinQ1Size :: integer()) -> already_exists | ok.
 create(_Cache, _MaxSize, _MinQ1Size) ->
-	error(badnif).
+	erlang:nif_error(badnif).
 
 %% @private
 -spec destroy(Cache :: atom()) -> notfound | ok.
 destroy(_Cache) ->
-	error(badnif).
+	erlang:nif_error(badnif).
 
 %% @private
 -spec destroy(Cache :: atom(), Key :: binary()) -> notfound | ok.
 destroy(_Cache, _Key) ->
-	error(badnif).
+	erlang:nif_error(badnif).
 
 %% @private
 -spec stats(Cache :: atom()) -> notfound | {Hits :: integer(), Misses :: integer(), Q1Size :: integer(), Q2Size :: integer(), IncrQSize :: integer()}.
 stats(_Cache) ->
-	error(badnif).
+	erlang:nif_error(badnif).
 
 -ifdef(TEST).
 
