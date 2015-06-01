@@ -110,6 +110,7 @@ struct cache {
 
 	ErlNifUInt64 hit;			/* protected by ctrl_lock */
 	ErlNifUInt64 miss;
+	ErlNifUInt64 wakeups, dud_wakeups;
 	int flags;
 
 	TAILQ_HEAD(cache_incr_q, cache_incr_node) incr_head[N_INCR_BKT];
@@ -239,7 +240,7 @@ static void *
 cache_bg_thread(void *arg)
 {
 	struct cache *c = (struct cache *)arg;
-	int i;
+	int i, dud;
 
 	while (1) {
 		enif_mutex_lock(c->ctrl_lock);
@@ -252,6 +253,9 @@ cache_bg_thread(void *arg)
 
 		/* sleep until there is work to do */
 		enif_cond_wait(c->check_cond, c->ctrl_lock);
+
+		__sync_add_and_fetch(&(c->wakeups), 1);
+		dud = 1;
 
 		/* we have to let go of ctrl_lock so we can take cache_lock then
 		   ctrl_lock again to get them back in the right order */
@@ -267,6 +271,8 @@ cache_bg_thread(void *arg)
 				n = TAILQ_FIRST(&(c->incr_head[i]));
 				TAILQ_REMOVE(&(c->incr_head[i]), n, entry);
 				__sync_sub_and_fetch(&(c->incr_count), 1);
+
+				dud = 0;
 
 				/* let go of the ctrl_lock here, we don't need it when we aren't looking
 				   at the incr_queue, and this way other threads can use it while we shuffle
@@ -311,6 +317,7 @@ cache_bg_thread(void *arg)
 				clock_now(&now);
 				while (n && n->expiry.tv_sec < now.tv_sec) {
 					enif_mutex_lock(c->ctrl_lock);
+					dud = 0;
 					destroy_cache_node(n);
 					enif_mutex_unlock(c->ctrl_lock);
 					n = RB_MIN(expiry_tree, &(c->expiry_head));
@@ -336,10 +343,14 @@ cache_bg_thread(void *arg)
 				destroy_cache_node(n);
 			}
 
+			dud = 0;
+
 			enif_mutex_unlock(c->ctrl_lock);
 			enif_rwlock_rwunlock(c->lookup_lock);
 		}
 
+		if (dud)
+			__sync_add_and_fetch(&(c->dud_wakeups), 1);
 		/* now let go of the cache_lock that we took right back at the start of
 		   this iteration */
 		enif_rwlock_rwunlock(c->cache_lock);
@@ -574,7 +585,7 @@ static ERL_NIF_TERM
 stats(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
 	ERL_NIF_TERM atom;
-	ERL_NIF_TERM ret, q1s, q2s, incrs;
+	ERL_NIF_TERM ret, q1s, q2s, incrs, wakeups, duds;
 	struct cache *c;
 
 	if (!enif_is_atom(env, argv[0]))
@@ -586,11 +597,13 @@ stats(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		q1s = enif_make_uint64(env, c->q1.size);
 		q2s = enif_make_uint64(env, c->q2.size);
 		incrs = enif_make_uint64(env, __sync_fetch_and_add(&(c->incr_count), 0));
+		wakeups = enif_make_uint64(env, __sync_fetch_and_add(&(c->wakeups), 0));
+		duds = enif_make_uint64(env, __sync_fetch_and_add(&(c->dud_wakeups), 0));
 		enif_rwlock_runlock(c->cache_lock);
-		ret = enif_make_tuple5(env,
+		ret = enif_make_tuple7(env,
 			enif_make_uint64(env, c->hit),
 			enif_make_uint64(env, c->miss),
-			q1s, q2s, incrs);
+			q1s, q2s, incrs, wakeups, duds);
 		enif_consume_timeslice(env, 10);
 		return ret;
 	} else {
